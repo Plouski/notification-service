@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Échec de paiement</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .logo {
+            max-width: 150px;
+            margin-bottom: 20px;
+        }
+        .content {
+            background-color: #f9f9f9;
+            padding: 30px;
+            border-radius: 5px;
+        }
+        .alert {
+            margin: 20px 0;
+            padding: 15px;
+            background-color: #fff;
+            border-radius: 5px;
+            border-left: 4px solid #f44336;
+        }
+        .button {
+            display: inline-block;
+            background-color: #4CAF50;
+            color: white;
+            text-decoration: none;
+            padding: 12px 30px;
+            border-radius: 4px;
+            margin: 20px 0;
+            font-weight: bold;
+        }
+        .footer {
+            margin-top: 30px;
+            font-size: 12px;
+            color: #777;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <img src="https://example.com/logo.png" alt="Logo" class="logo">
+        <h1>Échec de paiement</h1>
+    </div>
+    
+    <div class="content">
+        <p>Bonjour,</p>
+        
+        <p>Nous avons rencontré un problème lors du traitement de votre paiement pour un montant de <strong>{{amount}}€</strong>.</p>
+        
+        <div class="alert">
+            <p><strong>Raison :</strong> {{reason}}</p>
+        </div>
+        
+        <p>Nous essaierons de nouveau de prélever ce montant <strong>{{nextAttempt}}</strong>. Pour éviter toute interruption de service, nous vous invitons à mettre à jour vos informations de paiement.</p>
+        
+        <div style="text-align: center;">
+            <a href="{{updatePaymentUrl}}" class="button">Mettre à jour mon moyen de paiement</a>
+        </div>
+        
+        <p>Si vous avez des questions ou besoin d'aide, n'hésitez pas à contacter notre service client.</p>
+    </div>
+    
+    <div class="footer">
+        <p>Cet email a été envoyé automatiquement, merci de ne pas y répondre.</p>
+        <p>&copy; 2023 NomDeLaPlateforme. Tous droits réservés.</p>
+    </div>
+</body>
+</html>
