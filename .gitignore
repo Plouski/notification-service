@@ -2,4 +2,7 @@
 
 node_modules/
 
-logs/
+logs/config/firebase-config.json
+
+
+config/firebase-config.json
