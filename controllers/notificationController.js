@@ -1,37 +1,75 @@
 const notificationService = require('../services/notificationService');
+const ApiClient = require('../utils/apiClient');
+const logger = require('../utils/logger');
 
-// Envoi d'un e-mail de confirmation
-async function sendEmailConfirmation(req, res) {
-    const { email } = req.body;
+class NotificationController {
+  async sendAccountVerification(req, res) {
+    try {
+      const { email } = req.body;
 
-    // Créer un utilisateur fictif ou récupérer un utilisateur depuis ta base de données
-    const user = { id: 123, email: email };  // Exemple d'utilisateur
+      try {
+        const user = await ApiClient.getUserByEmail(email);
+        const result = await notificationService.sendAccountVerification(user);
 
-    // Générer le token JWT pour l'utilisateur
-    const token = notificationService.generateJWT(user);
+        res.status(200).json({
+          message: 'Notifications de vérification envoyées',
+          channels: {
+            email: result.email,
+            sms: result.sms,
+            push: result.push
+          }
+        });
+      } catch (userError) {
+        if (userError.message === 'Utilisateur non trouvé') {
+          return res.status(404).json({ 
+            message: 'Aucun utilisateur trouvé avec cet email' 
+          });
+        }
+        
+        throw userError;
+      }
+    } catch (error) {
+      logger.error('Erreur lors de l\'envoi des notifications de vérification', error);
+      res.status(500).json({ 
+        message: 'Échec de l\'envoi des notifications de vérification',
+        error: error.message
+      });
+    }
+  }
 
-    // Envoi de l'email de confirmation avec le token
-    const result = await notificationService.sendEmailConfirmation(email, token);
+  async initiatePasswordReset(req, res) {
+    try {
+      const { email } = req.body;
 
-    res.json(result);
+      try {
+        const user = await ApiClient.getUserByEmail(email);
+        const result = await notificationService.initiatePasswordReset(user);
+
+        res.status(200).json({
+          message: 'Notifications de réinitialisation de mot de passe envoyées',
+          channels: {
+            email: result.email,
+            sms: result.sms,
+            push: result.push
+          }
+        });
+      } catch (userError) {
+        if (userError.message === 'Utilisateur non trouvé') {
+          return res.status(404).json({ 
+            message: 'Aucun utilisateur trouvé avec cet email' 
+          });
+        }
+        
+        throw userError;
+      }
+    } catch (error) {
+      logger.error('Erreur lors de l\'initiation de la réinitialisation de mot de passe', error);
+      res.status(500).json({ 
+        message: 'Échec de l\'initiation de la réinitialisation de mot de passe',
+        error: error.message
+      });
+    }
+  }
 }
 
-// Envoi d'un SMS pour réinitialisation de mot de passe
-async function sendResetPasswordSms(req, res) {
-    const { phone, resetCode } = req.body;
-    const result = await notificationService.sendSms(phone, resetCode);
-    res.json(result);
-}
-
-// Envoi d'une notification push
-async function sendPushNotification(req, res) {
-    const { userId, title, body } = req.body;
-    const result = await notificationService.sendPushNotification(userId, title, body);
-    res.json(result);
-}
-
-module.exports = {
-    sendEmailConfirmation,
-    sendResetPasswordSms,
-    sendPushNotification
-};
+module.exports = new NotificationController();
