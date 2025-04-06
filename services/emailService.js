@@ -1,63 +1,143 @@
-const nodemailer = require('nodemailer');
+// services/emailService.js (mis à jour)
+const mailConfig = require('../config/mailConfig');
+const emailTemplates = require('../templates/emailTemplates');
 const logger = require('../utils/logger');
 
 class EmailService {
   constructor() {
-    this.transporter = nodemailer.createTransport({
-      host: process.env.EMAIL_HOST,
-      port: process.env.EMAIL_PORT,
-      secure: false,
-      auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS
-      }
-    });
+    this.transporter = mailConfig.getTransporter();
   }
 
-  async sendConfirmationEmail(user, confirmationToken) {
+  async sendEmail(to, subject, templateName, templateData) {
     try {
-      const confirmationLink = `${process.env.FRONTEND_URL}/confirm-email?token=${confirmationToken}`;
+      if (!emailTemplates[templateName]) {
+        throw new Error(`Template d'email "${templateName}" non trouvé`);
+      }
+
+      const template = emailTemplates[templateName];
+
+      await this.transporter.sendMail({
+        from: process.env.EMAIL_FROM,
+        to: to,
+        subject: subject,
+        html: template.html(templateData),
+        text: template.text(templateData)
+      });
+
+      logger.info(`Email "${templateName}" envoyé à ${to}`);
+      return true;
+    } catch (error) {
+      logger.error(`Erreur lors de l'envoi de l'email "${templateName}"`, {
+        error: error.message,
+        recipient: to
+      });
+      return false;
+    }
+  }
+
+  async sendAccountVerificationEmail(user, verificationToken) {
+    const confirmationLink = `${process.env.FRONTEND_URL}/confirm-email?token=${verificationToken}`;
+    
+    return this.sendEmail(
+      user.email,
+      'Confirmez votre compte',
+      'accountVerification',
+      {
+        firstName: user.firstName || 'Utilisateur',
+        confirmationLink: confirmationLink
+      }
+    );
+  }
+
+  async sendVerificationEmail(user, verificationToken) {
+    try {
+      const verificationLink = `${process.env.FRONTEND_URL}/verify-account?token=${verificationToken}`;
       
       await this.transporter.sendMail({
         from: process.env.EMAIL_FROM,
         to: user.email,
-        subject: 'Confirmez votre compte',
+        subject: 'Vérifiez votre compte',
         html: `
-          <h1>Confirmation de compte</h1>
+          <h1>Vérification de compte</h1>
           <p>Bonjour ${user.firstName},</p>
-          <p>Cliquez sur le lien ci-dessous pour confirmer votre compte :</p>
-          <a href="${confirmationLink}">Confirmer mon compte</a>
+          <p>Cliquez sur le lien ci-dessous pour vérifier votre compte :</p>
+          <a href="${verificationLink}">Vérifier mon compte</a>
           <p>Ce lien expire dans 24 heures.</p>
         `
       });
-
-      logger.info(`Confirmation email sent to ${user.email}`);
+  
+      logger.info(`Email de vérification envoyé à ${user.email}`);
       return true;
     } catch (error) {
-      logger.error('Error sending confirmation email', error);
+      logger.error('Erreur lors de l\'envoi de l\'email de vérification', error);
       return false;
     }
   }
 
-  async sendPasswordResetEmail(user, resetCode) {
-    try {
-      await this.transporter.sendMail({
-        from: process.env.EMAIL_FROM,
-        to: user.email,
-        subject: 'Réinitialisation de mot de passe',
-        html: `
-          <h1>Réinitialisation de mot de passe</h1>
-          <p>Votre code de réinitialisation est : <strong>${resetCode}</strong></p>
-          <p>Ce code expire dans 15 minutes.</p>
-        `
-      });
+  async sendPasswordResetEmail(user, resetToken) {
+    return this.sendEmail(
+      user.email,
+      'Réinitialisation de mot de passe',
+      'passwordReset',
+      {
+        firstName: user.firstName || 'Utilisateur',
+        resetCode: resetToken
+      }
+    );
+  }
 
-      logger.info(`Password reset email sent to ${user.email}`);
-      return true;
-    } catch (error) {
-      logger.error('Error sending password reset email', error);
-      return false;
-    }
+  async sendInvoiceEmail(user, invoiceData) {
+    return this.sendEmail(
+      user.email,
+      `Facture ${invoiceData.invoiceNumber}`,
+      'invoice',
+      {
+        firstName: user.firstName || 'Utilisateur',
+        ...invoiceData
+      }
+    );
+  }
+
+  async sendSubscriptionStartedEmail(user, subscriptionData) {
+    return this.sendEmail(
+      user.email,
+      'Confirmation d\'abonnement',
+      'subscriptionStarted',
+      {
+        firstName: user.firstName || 'Utilisateur',
+        ...subscriptionData
+      }
+    );
+  }
+
+  async sendSubscriptionEndedEmail(user, subscriptionData) {
+    const resubscribeLink = `${process.env.FRONTEND_URL}/subscriptions`;
+    
+    return this.sendEmail(
+      user.email,
+      'Fin d\'abonnement',
+      'subscriptionEnded',
+      {
+        firstName: user.firstName || 'Utilisateur',
+        resubscribeLink,
+        ...subscriptionData
+      }
+    );
+  }
+
+  async sendPaymentFailedEmail(user, paymentData) {
+    const updatePaymentLink = `${process.env.FRONTEND_URL}/payment-methods`;
+    
+    return this.sendEmail(
+      user.email,
+      'Échec de paiement',
+      'paymentFailed',
+      {
+        firstName: user.firstName || 'Utilisateur',
+        updatePaymentLink,
+        ...paymentData
+      }
+    );
   }
 }
 

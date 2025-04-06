@@ -1,65 +1,83 @@
-const twilio = require('twilio');
+// services/smsService.js (mis à jour)
+const smsConfig = require('../config/smsConfig');
+const smsTemplates = require('../templates/smsTemplates');
 const logger = require('../utils/logger');
 
 class SMSService {
   constructor() {
-    try {
-      this.twilioClient = twilio(
-        process.env.TWILIO_ACCOUNT_SID, 
-        process.env.TWILIO_AUTH_TOKEN
-      );
-    } catch (error) {
-      logger.error('Erreur d\'initialisation Twilio', error);
-    }
+    this.twilioClient = smsConfig.getClient();
   }
 
-  async sendPasswordResetSMS(phoneNumber, resetCode) {
-    // Log détaillé pour le débogage
-    console.log('Tentative d\'envoi SMS avec les paramètres :', {
-      phoneNumber,
-      resetCode,
-      twilioAccountSid: process.env.TWILIO_ACCOUNT_SID ? 'Présent' : 'Manquant',
-      twilioPhoneNumber: process.env.TWILIO_PHONE_NUMBER
-    });
+  async sendSMS(phoneNumber, templateName, templateData) {
+    // Vérifications préliminaires
+    if (!phoneNumber) {
+      logger.warn('Tentative d\'envoi SMS sans numéro de téléphone');
+      return false;
+    }
+
+    if (!this.twilioClient) {
+      logger.error('Client Twilio non initialisé');
+      return false;
+    }
+
+    if (!smsTemplates[templateName]) {
+      logger.error(`Template SMS "${templateName}" non trouvé`);
+      return false;
+    }
 
     try {
-      // Validation du numéro
-      if (!phoneNumber) {
-        console.warn('Numéro de téléphone manquant');
-        return false;
-      }
-
-      // Vérification des credentials Twilio
-      if (!this.twilioClient) {
-        console.error('Client Twilio non initialisé');
-        return false;
-      }
+      // Préparation du message
+      const messageContent = smsTemplates[templateName]({
+        appName: process.env.APP_NAME || 'Notre application',
+        ...templateData
+      });
 
       // Envoi du SMS
       const message = await this.twilioClient.messages.create({
-        body: `Votre code de réinitialisation est : ${resetCode}. Ce code expire dans 15 minutes.`,
+        body: messageContent,
         from: process.env.TWILIO_PHONE_NUMBER,
         to: phoneNumber
       });
 
-      // Log de succès
-      console.log(`SMS envoyé avec succès à ${phoneNumber}`, { 
+      logger.info(`SMS "${templateName}" envoyé à ${phoneNumber}`, { 
         messageSid: message.sid 
       });
-
+      
       return true;
     } catch (error) {
-      // Log détaillé de l'erreur
-      console.error('Erreur complète lors de l\'envoi du SMS', {
-        message: error.message,
-        code: error.code,
-        moreInfo: error.moreInfo,
-        status: error.status,
-        fullError: error
+      logger.error(`Erreur lors de l'envoi du SMS "${templateName}"`, {
+        error: error.message,
+        phoneNumber: phoneNumber
       });
-
+      
       return false;
     }
+  }
+
+  async sendVerificationSMS(phoneNumber, verificationCode) {
+    return this.sendSMS(phoneNumber, 'accountVerification', {
+      code: verificationCode
+    });
+  }
+
+  async sendPasswordResetSMS(phoneNumber, resetCode) {
+    return this.sendSMS(phoneNumber, 'passwordReset', {
+      code: resetCode
+    });
+  }
+
+  async sendTwoFactorAuthSMS(phoneNumber, authCode) {
+    return this.sendSMS(phoneNumber, 'twoFactorAuth', {
+      code: authCode
+    });
+  }
+
+  async sendSubscriptionNotificationSMS(phoneNumber, planName, isStarting = true) {
+    const templateName = isStarting ? 'subscriptionStarted' : 'subscriptionEnded';
+    
+    return this.sendSMS(phoneNumber, templateName, {
+      planName
+    });
   }
 }
 

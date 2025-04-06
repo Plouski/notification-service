@@ -15,42 +15,87 @@ class ApiClient {
   async getUserByEmail(email) {
     try {
       console.log(`Recherche de l'utilisateur avec l'email: ${email}`);
-      
+
       const response = await this.dataServiceClient.get(`/users/email/${email}`);
-      
+
       console.log('Utilisateur trouvé:', response.data);
       return response.data;
     } catch (error) {
+      console.error('Erreur de recherche utilisateur:', error.response?.data || error.message);
+
       if (error.response && error.response.status === 404) {
         throw new Error('Utilisateur non trouvé');
       }
-      
-      console.error('Erreur détaillée:', error.response?.data || error.message);
-      logger.error('Erreur lors de la recherche de l\'utilisateur par email', error);
+
       throw error;
     }
   }
 
-  async updateUserVerificationStatus(userId, status) {
+  async getUserById(userId) {
     try {
-      const response = await this.dataServiceClient.patch(`/users/${userId}/verification`, { 
-        isVerified: status 
-      });
+      console.log(`Recherche de l'utilisateur avec l'ID: ${userId}`);
+  
+      const response = await this.dataServiceClient.get(`/users/${userId}`);
+  
+      console.log('Utilisateur trouvé:', response.data);
       return response.data;
     } catch (error) {
-      logger.error('Error updating user verification status', error);
+      console.error('Erreur de recherche utilisateur:', error.response?.data || error.message);
+  
+      if (error.response && error.response.status === 404) {
+        throw new Error('Utilisateur non trouvé');
+      }
+  
       throw error;
     }
   }
 
-  async createPasswordResetToken(userId, token) {
+  async createPasswordResetToken(userId, tokenData) {
     try {
-      const response = await this.dataServiceClient.post(`/users/${userId}/reset-password`, { 
-        resetToken: token 
-      });
+      console.log('Création du token de réinitialisation pour l\'utilisateur:', userId);
+
+      const response = await this.dataServiceClient.post(`/users/${userId}/reset-password`, tokenData);
+
+      console.log('Réponse de création de token:', response.data);
       return response.data;
     } catch (error) {
-      logger.error('Error creating password reset token', error);
+      console.error('Erreur lors de la création du token de réinitialisation:', error.response?.data || error.message);
+      throw error;
+    }
+  }
+
+  async verifyAccount(email, verificationToken) {
+    try {
+      const response = await this.dataServiceClient.post('/users/verify-account', {
+        email,
+        verificationToken
+      });
+
+      return response.data;
+    } catch (error) {
+      console.error('Erreur de vérification de compte:', error.response?.data || error.message);
+
+      if (error.response && error.response.status === 400) {
+        throw new Error('Token invalide ou expiré');
+      }
+
+      throw error;
+    }
+  }
+
+  async createVerificationToken(userId, tokenData) {
+    try {
+      console.log('Création du token de vérification :', {
+        userId,
+        tokenData
+      });
+
+      const response = await this.dataServiceClient.post(`/users/${userId}/verify`, tokenData);
+
+      console.log('Réponse de création de token de vérification:', response.data);
+      return response.data;
+    } catch (error) {
+      console.error('Erreur lors de la création du token de vérification:', error.response?.data || error.message);
       throw error;
     }
   }

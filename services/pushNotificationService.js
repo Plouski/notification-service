@@ -1,64 +1,138 @@
-const admin = require('firebase-admin');
+// services/pushNotificationService.js (mis à jour)
+const firebaseConfig = require('../config/firebaseConfig');
 const logger = require('../utils/logger');
 
 class PushNotificationService {
   constructor() {
-    try {
-      admin.initializeApp({
-        credential: admin.credential.cert({
-          type: process.env.FIREBASE_TYPE,
-          project_id: process.env.FIREBASE_PROJECT_ID,
-          private_key_id: process.env.FIREBASE_PRIVATE_KEY_ID,
-          private_key: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n'),
-          client_email: process.env.FIREBASE_CLIENT_EMAIL,
-          client_id: process.env.FIREBASE_CLIENT_ID,
-          auth_uri: process.env.FIREBASE_AUTH_URI,
-          token_uri: process.env.FIREBASE_TOKEN_URI,
-          auth_provider_x509_cert_url: process.env.FIREBASE_AUTH_PROVIDER_X509_CERT_URL,
-          client_x509_cert_url: process.env.FIREBASE_CLIENT_X509_CERT_URL
-        })
-      });
-    } catch (error) {
-      logger.error('Erreur d\'initialisation Firebase', error);
-    }
+    this.messaging = firebaseConfig.getMessaging();
   }
 
-  async sendPushNotification(firebaseToken, notification) {
+  async sendPushNotification(token, notification, data = {}) {
+    if (!token) {
+      logger.warn('Tentative d\'envoi de notification push sans token');
+      return false;
+    }
+
+    if (!this.messaging) {
+      logger.error('Service Firebase Messaging non initialisé');
+      return false;
+    }
+
     try {
       const message = {
         notification: {
           title: notification.title,
           body: notification.body
         },
-        token: firebaseToken
+        data: data,
+        token: token
       };
 
-      const response = await admin.messaging().send(message);
+      const response = await this.messaging.send(message);
       
-      logger.info('Notification push envoyée avec succès', response);
-      return response;
+      logger.info('Notification push envoyée avec succès', { 
+        messageId: response 
+      });
+      
+      return true;
     } catch (error) {
-      logger.error('Erreur lors de l\'envoi de la notification push', error);
-      return null;
+      logger.error('Erreur lors de l\'envoi de la notification push', {
+        error: error.message,
+        token: token
+      });
+      
+      return false;
     }
   }
 
-  async sendAccountVerificationNotification(firebaseToken) {
-    const notification = {
-      title: 'Vérification de compte',
-      body: 'Veuillez vérifier votre compte pour débloquer toutes les fonctionnalités.'
-    };
+  async sendToTopic(topic, notification, data = {}) {
+    if (!topic) {
+      logger.warn('Tentative d\'envoi de notification push sans sujet spécifié');
+      return false;
+    }
 
-    return this.sendPushNotification(firebaseToken, notification);
+    if (!this.messaging) {
+      logger.error('Service Firebase Messaging non initialisé');
+      return false;
+    }
+
+    try {
+      const message = {
+        notification: {
+          title: notification.title,
+          body: notification.body
+        },
+        data: data,
+        topic: topic
+      };
+
+      const response = await this.messaging.send(message);
+      
+      logger.info(`Notification push envoyée au sujet ${topic}`, { 
+        messageId: response 
+      });
+      
+      return true;
+    } catch (error) {
+      logger.error(`Erreur lors de l'envoi de la notification push au sujet ${topic}`, {
+        error: error.message
+      });
+      
+      return false;
+    }
   }
 
-  async sendPasswordResetNotification(firebaseToken) {
-    const notification = {
-      title: 'Réinitialisation de mot de passe',
-      body: 'Une demande de réinitialisation de mot de passe a été effectuée.'
-    };
+  async sendVerificationNotification(firebaseToken, verificationToken) {
+    try {
+      const message = {
+        notification: {
+          title: 'Vérification de compte',
+          body: 'Cliquez pour vérifier votre compte'
+        },
+        data: {
+          verificationToken: verificationToken
+        },
+        token: firebaseToken
+      };
+  
+      const response = await admin.messaging().send(message);
+      
+      logger.info('Notification push de vérification envoyée');
+      return true;
+    } catch (error) {
+      logger.error('Erreur lors de l\'envoi de la notification push de vérification', error);
+      return false;
+    }
+  }
 
-    return this.sendPushNotification(firebaseToken, notification);
+  async sendAccountVerificationNotification(token) {
+    return this.sendPushNotification(token, {
+      title: 'Vérification de compte',
+      body: 'Veuillez vérifier votre compte pour activer toutes les fonctionnalités.'
+    });
+  }
+
+  async sendPasswordResetNotification(token) {
+    return this.sendPushNotification(token, {
+      title: 'Réinitialisation de mot de passe',
+      body: 'Une demande de réinitialisation de mot de passe a été initiée.'
+    });
+  }
+
+  async sendSubscriptionNotification(token, planName, isStarting = true) {
+    const title = isStarting ? 'Abonnement activé' : 'Abonnement terminé';
+    const body = isStarting 
+      ? `Votre abonnement ${planName} est maintenant actif.` 
+      : `Votre abonnement ${planName} a pris fin.`;
+    
+    return this.sendPushNotification(token, { title, body });
+  }
+
+  async sendAIResultNotification(token, resultType) {
+    return this.sendPushNotification(token, {
+      title: 'Résultat IA disponible',
+      body: `Votre ${resultType} est maintenant disponible.`
+    });
   }
 }
 
