@@ -1,268 +1,86 @@
-// controllers/notificationController.js (mis à jour)
-const notificationService = require('../services/notificationService');
-const ApiClient = require('../utils/apiClient');
-const logger = require('../utils/logger');
+const EmailService = require("../services/emailService");
+const FreeSmsService = require("../services/freeSmsService");
+const PushService = require("../services/pushService");
 
-function isValidPhoneNumber(phoneNumber) {
-  // Regex pour valider un numéro de téléphone international
-  const phoneRegex = /^\+[1-9]\d{1,14}$/;
-  return phoneRegex.test(phoneNumber);
-}
+const NotificationController = {
+  sendEmail: async (req, res) => {
+    const { type, email, tokenOrCode } = req.body;
 
-class NotificationController {
-
-  //Envoyer le code de vérification
-  async sendAccountVerification(req, res) {
     try {
-      const { email } = req.body;
-  
-      console.log('Données reçues pour vérification de compte :', { email });
-  
-      try {
-        // Récupérer l'utilisateur depuis data-service
-        const user = await ApiClient.getUserByEmail(email);
-  
-        console.log('Utilisateur récupéré :', user);
-  
-        const result = await notificationService.sendAccountVerification(user);
-  
-        res.status(200).json({
-          message: 'Notifications de vérification envoyées',
-          channels: {
-            email: result.email,
-            sms: result.sms,
-            push: result.push
-          }
+      switch (type) {
+        case "confirm":
+          await EmailService.sendConfirmationEmail(email, tokenOrCode);
+          break;
+        case "reset":
+          await EmailService.sendPasswordResetEmail(email, tokenOrCode);
+          break;
+        case "welcome":
+          await EmailService.sendWelcomeEmail(email, tokenOrCode);
+          break;
+        default:
+          return res.status(400).json({ error: "Type d'email inconnu" });
+      }
+
+      return res.status(200).json({ success: true });
+
+    } catch (err) {
+      console.error("❌ Erreur dans sendEmail:", err.message);
+      return res.status(500).json({ error: err.message });
+    }
+  },
+
+  sendSMS: async (req, res) => {
+    console.log('📨 Requête SMS reçue:', JSON.stringify(req.body));
+    
+    try {
+      const { username, apiKey, code, type } = req.body;
+      
+      if (!username || !apiKey) {
+        return res.status(400).json({
+          success: false,
+          message: 'Identifiants Free Mobile requis'
         });
-      } catch (userError) {
-        console.error('Erreur utilisateur :', userError);
-        if (userError.message === 'Utilisateur non trouvé') {
-          return res.status(404).json({ 
-            message: 'Aucun utilisateur trouvé avec cet email' 
+      }
+      
+      if (type === 'reset') {
+        if (!code) {
+          return res.status(400).json({
+            success: false,
+            message: 'Code requis pour reset'
           });
         }
         
-        throw userError;
+        console.log(`🔄 Tentative d'envoi SMS de réinitialisation avec code ${code}`);
+        await FreeSmsService.sendPasswordResetCode(username, apiKey, code);
+        console.log('✅ SMS envoyé avec succès');
+      } else {
+        // Autres types de SMS...
       }
+      
+      return res.status(200).json({
+        success: true,
+        message: 'SMS envoyé avec succès'
+      });
     } catch (error) {
-      console.error('Erreur complète :', error);
-      logger.error('Erreur lors de l\'envoi des notifications de vérification', error);
-      res.status(500).json({ 
-        message: 'Échec de l\'envoi des notifications de vérification',
-        error: error.message 
+      console.error('❌ Erreur de traitement SMS:', error.message);
+      return res.status(500).json({
+        success: false,
+        message: `Erreur d'envoi: ${error.message}`
       });
     }
-  }
+  },
 
-  //Envoyer le code pour reinitialiser le mdp oublié
-  async initiatePasswordReset(req, res) {
+  sendPush: async (req, res) => {
+    const { token, title, body } = req.body;
+
     try {
-      const { email, phoneNumber } = req.body;
-  
-      console.log('Données reçues :', { email, phoneNumber }); // Ajoutez ce log
-  
-      try {
-        // Récupérer l'utilisateur depuis data-service
-        const user = await ApiClient.getUserByEmail(email);
-        
-        // Ajouter le numéro de téléphone à l'objet utilisateur
-        user.phoneNumber = phoneNumber;
-  
-        console.log('Utilisateur récupéré :', user); // Ajoutez ce log
-  
-        const result = await notificationService.initiatePasswordReset(user);
-  
-        res.status(200).json({
-          message: 'Notifications de réinitialisation de mot de passe envoyées',
-          channels: {
-            email: result.email,
-            sms: result.sms,
-            push: result.push
-          }
-        });
-      } catch (userError) {
-        console.error('Erreur utilisateur :', userError); // Ajoutez ce log
-        if (userError.message === 'Utilisateur non trouvé') {
-          return res.status(404).json({ 
-            message: 'Aucun utilisateur trouvé avec cet email' 
-          });
-        }
-        
-        throw userError;
-      }
-    } catch (error) {
-      console.error('Erreur complète :', error); // Ajoutez ce log
-      logger.error('Erreur lors de l\'initiation de la réinitialisation de mot de passe', error);
-      res.status(500).json({ 
-        message: 'Échec de l\'initiation de la réinitialisation de mot de passe',
-        error: error.message 
-      });
+      await PushService.sendNotification(token, title, body);
+      return res.status(200).json({ success: true });
+    } catch (err) {
+      console.error("❌ Erreur dans sendPush:", err.message);
+      return res.status(500).json({ error: err.message });
     }
   }
+};
 
-  async sendSubscriptionStarted(req, res) {
-    try {
-      const { userId, subscriptionData } = req.body;
-
-      try {
-        const user = await ApiClient.getUserById(userId);
-        const result = await notificationService.sendSubscriptionNotification(user, subscriptionData, true);
-
-        res.status(200).json({
-          message: 'Notifications de début d\'abonnement envoyées',
-          channels: {
-            email: result.email,
-            sms: result.sms,
-            push: result.push
-          }
-        });
-      } catch (userError) {
-        if (userError.message === 'Utilisateur non trouvé') {
-          return res.status(404).json({ 
-            message: 'Utilisateur non trouvé' 
-          });
-        }
-        
-        throw userError;
-      }
-    } catch (error) {
-      logger.error('Erreur lors de l\'envoi des notifications de début d\'abonnement', error);
-      res.status(500).json({ 
-        message: 'Échec de l\'envoi des notifications de début d\'abonnement',
-        error: error.message
-      });
-    }
-  }
-
-  async sendSubscriptionEnded(req, res) {
-    try {
-      const { userId, subscriptionData } = req.body;
-
-      try {
-        const user = await ApiClient.getUserById(userId);
-        const result = await notificationService.sendSubscriptionNotification(user, subscriptionData, false);
-
-        res.status(200).json({
-          message: 'Notifications de fin d\'abonnement envoyées',
-          channels: {
-            email: result.email,
-            sms: result.sms,
-            push: result.push
-          }
-        });
-      } catch (userError) {
-        if (userError.message === 'Utilisateur non trouvé') {
-          return res.status(404).json({ 
-            message: 'Utilisateur non trouvé' 
-          });
-        }
-        
-        throw userError;
-      }
-    } catch (error) {
-      logger.error('Erreur lors de l\'envoi des notifications de fin d\'abonnement', error);
-      res.status(500).json({ 
-        message: 'Échec de l\'envoi des notifications de fin d\'abonnement',
-        error: error.message
-      });
-    }
-  }
-
-  async sendInvoice(req, res) {
-    try {
-      const { userId, invoiceData } = req.body;
-
-      try {
-        const user = await ApiClient.getUserById(userId);
-        const result = await notificationService.sendInvoiceNotification(user, invoiceData);
-
-        res.status(200).json({
-          message: 'Facture envoyée avec succès',
-          channels: {
-            email: result.email
-          }
-        });
-      } catch (userError) {
-        if (userError.message === 'Utilisateur non trouvé') {
-          return res.status(404).json({ 
-            message: 'Utilisateur non trouvé' 
-          });
-        }
-        
-        throw userError;
-      }
-    } catch (error) {
-      logger.error('Erreur lors de l\'envoi de la facture', error);
-      res.status(500).json({ 
-        message: 'Échec de l\'envoi de la facture',
-        error: error.message
-      });
-    }
-  }
-
-  async sendPaymentFailed(req, res) {
-    try {
-      const { userId, paymentData } = req.body;
-
-      try {
-        const user = await ApiClient.getUserById(userId);
-        const result = await notificationService.sendPaymentFailedNotification(user, paymentData);
-
-        res.status(200).json({
-          message: 'Notification d\'échec de paiement envoyée',
-          channels: {
-            email: result.email
-          }
-        });
-      } catch (userError) {
-        if (userError.message === 'Utilisateur non trouvé') {
-          return res.status(404).json({ 
-            message: 'Utilisateur non trouvé' 
-          });
-        }
-        
-        throw userError;
-      }
-    } catch (error) {
-      logger.error('Erreur lors de l\'envoi de la notification d\'échec de paiement', error);
-      res.status(500).json({ 
-        message: 'Échec de l\'envoi de la notification d\'échec de paiement',
-        error: error.message
-      });
-    }
-  }
-
-  async sendAINotification(req, res) {
-    try {
-      const { userId, resultData } = req.body;
-
-      try {
-        const user = await ApiClient.getUserById(userId);
-        const result = await notificationService.sendAIResultNotification(user, resultData);
-
-        res.status(200).json({
-          message: 'Notification de résultat IA envoyée',
-          channels: {
-            push: result.push
-          }
-        });
-      } catch (userError) {
-        if (userError.message === 'Utilisateur non trouvé') {
-          return res.status(404).json({ 
-            message: 'Utilisateur non trouvé' 
-          });
-        }
-        
-        throw userError;
-      }
-    } catch (error) {
-      logger.error('Erreur lors de l\'envoi de la notification de résultat IA', error);
-      res.status(500).json({ 
-        message: 'Échec de l\'envoi de la notification de résultat IA',
-        error: error.message
-      });
-    }
-  }
-}
-
-module.exports = new NotificationController();
+module.exports = NotificationController;
