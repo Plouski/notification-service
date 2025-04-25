@@ -1,38 +1,33 @@
-require('dotenv').config();
-const express = require('express');
-const cors = require('cors');
-const logger = require('./utils/logger');
-const notificationRoutes = require('./routes/notificationRoutes');
+const express = require("express")
+const dotenv = require("dotenv")
+const notificationRoutes = require("./routes/notificationRoutes")
 
-const app = express();
-const PORT = process.env.PORT || 3003;
+dotenv.config()
+const app = express()
 
-// Middlewares
-app.use(cors());
-app.use(express.json());
+const cors = require("cors");
 
-// Routes
-app.use('/notifications', notificationRoutes);
+app.use(cors({
+  origin: "http://localhost:3000", // le port de ton frontend
+  methods: ["GET", "POST", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "x-api-key"],
+}));
 
-// Health check
-app.get('/health', (req, res) => {
-  res.status(200).json({ 
-    status: 'healthy', 
-    service: 'notification-service' 
-  });
+const mongoose = require("mongoose");
+
+mongoose.connect(process.env.MONGO_URI, {
+  useNewUrlParser: true,
+  useUnifiedTopology: true,
+})
+.then(() => {
+  console.log("✅ Connected to MongoDB");
+})
+.catch((err) => {
+  console.error("❌ Failed to connect to MongoDB:", err);
 });
 
-// Global error handler
-app.use((err, req, res, next) => {
-  logger.error(err.stack);
-  res.status(500).json({
-    status: 'error',
-    message: err.message || 'Something went wrong'
-  });
-});
+app.use(express.json())
+app.use("/api/notifications", notificationRoutes)
 
-app.listen(PORT, () => {
-  logger.info(`Notification Service running on port ${PORT}`);
-});
-
-module.exports = app;
+const PORT = process.env.PORT || 3005
+app.listen(PORT, () => console.log(`Notification service is running on port ${PORT}`))

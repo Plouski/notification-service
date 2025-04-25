@@ -1,75 +1,86 @@
-const notificationService = require('../services/notificationService');
-const ApiClient = require('../utils/apiClient');
-const logger = require('../utils/logger');
+const EmailService = require("../services/emailService");
+const FreeSmsService = require("../services/freeSmsService");
+const PushService = require("../services/pushService");
 
-class NotificationController {
-  async sendAccountVerification(req, res) {
+const NotificationController = {
+  sendEmail: async (req, res) => {
+    const { type, email, tokenOrCode } = req.body;
+
     try {
-      const { email } = req.body;
+      switch (type) {
+        case "confirm":
+          await EmailService.sendConfirmationEmail(email, tokenOrCode);
+          break;
+        case "reset":
+          await EmailService.sendPasswordResetEmail(email, tokenOrCode);
+          break;
+        case "welcome":
+          await EmailService.sendWelcomeEmail(email, tokenOrCode);
+          break;
+        default:
+          return res.status(400).json({ error: "Type d'email inconnu" });
+      }
 
-      try {
-        const user = await ApiClient.getUserByEmail(email);
-        const result = await notificationService.sendAccountVerification(user);
+      return res.status(200).json({ success: true });
 
-        res.status(200).json({
-          message: 'Notifications de vérification envoyées',
-          channels: {
-            email: result.email,
-            sms: result.sms,
-            push: result.push
-          }
+    } catch (err) {
+      console.error("❌ Erreur dans sendEmail:", err.message);
+      return res.status(500).json({ error: err.message });
+    }
+  },
+
+  sendSMS: async (req, res) => {
+    console.log('📨 Requête SMS reçue:', JSON.stringify(req.body));
+    
+    try {
+      const { username, apiKey, code, type } = req.body;
+      
+      if (!username || !apiKey) {
+        return res.status(400).json({
+          success: false,
+          message: 'Identifiants Free Mobile requis'
         });
-      } catch (userError) {
-        if (userError.message === 'Utilisateur non trouvé') {
-          return res.status(404).json({ 
-            message: 'Aucun utilisateur trouvé avec cet email' 
+      }
+      
+      if (type === 'reset') {
+        if (!code) {
+          return res.status(400).json({
+            success: false,
+            message: 'Code requis pour reset'
           });
         }
         
-        throw userError;
+        console.log(`🔄 Tentative d'envoi SMS de réinitialisation avec code ${code}`);
+        await FreeSmsService.sendPasswordResetCode(username, apiKey, code);
+        console.log('✅ SMS envoyé avec succès');
+      } else {
+        // Autres types de SMS...
       }
+      
+      return res.status(200).json({
+        success: true,
+        message: 'SMS envoyé avec succès'
+      });
     } catch (error) {
-      logger.error('Erreur lors de l\'envoi des notifications de vérification', error);
-      res.status(500).json({ 
-        message: 'Échec de l\'envoi des notifications de vérification',
-        error: error.message
+      console.error('❌ Erreur de traitement SMS:', error.message);
+      return res.status(500).json({
+        success: false,
+        message: `Erreur d'envoi: ${error.message}`
       });
     }
-  }
+  },
 
-  async initiatePasswordReset(req, res) {
+  sendPush: async (req, res) => {
+    const { token, title, body } = req.body;
+
     try {
-      const { email } = req.body;
-
-      try {
-        const user = await ApiClient.getUserByEmail(email);
-        const result = await notificationService.initiatePasswordReset(user);
-
-        res.status(200).json({
-          message: 'Notifications de réinitialisation de mot de passe envoyées',
-          channels: {
-            email: result.email,
-            sms: result.sms,
-            push: result.push
-          }
-        });
-      } catch (userError) {
-        if (userError.message === 'Utilisateur non trouvé') {
-          return res.status(404).json({ 
-            message: 'Aucun utilisateur trouvé avec cet email' 
-          });
-        }
-        
-        throw userError;
-      }
-    } catch (error) {
-      logger.error('Erreur lors de l\'initiation de la réinitialisation de mot de passe', error);
-      res.status(500).json({ 
-        message: 'Échec de l\'initiation de la réinitialisation de mot de passe',
-        error: error.message
-      });
+      await PushService.sendNotification(token, title, body);
+      return res.status(200).json({ success: true });
+    } catch (err) {
+      console.error("❌ Erreur dans sendPush:", err.message);
+      return res.status(500).json({ error: err.message });
     }
   }
-}
+};
 
-module.exports = new NotificationController();
+module.exports = NotificationController;

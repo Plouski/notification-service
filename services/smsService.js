@@ -1,66 +1,114 @@
-const twilio = require('twilio');
-const logger = require('../utils/logger');
+// Mise à jour du service SMS avec meilleure gestion des erreurs et logs
+const twilio = require("twilio");
 
-class SMSService {
-  constructor() {
+const SmsService = {
+  sendPasswordResetCode: async (phoneNumber, code) => {
     try {
-      this.twilioClient = twilio(
-        process.env.TWILIO_ACCOUNT_SID, 
-        process.env.TWILIO_AUTH_TOKEN
-      );
-    } catch (error) {
-      logger.error('Erreur d\'initialisation Twilio', error);
-    }
-  }
+      // Amélioration du formatage du numéro au format international E.164
+      let formattedPhone = phoneNumber;
 
-  async sendPasswordResetSMS(phoneNumber, resetCode) {
-    // Log détaillé pour le débogage
-    console.log('Tentative d\'envoi SMS avec les paramètres :', {
-      phoneNumber,
-      resetCode,
-      twilioAccountSid: process.env.TWILIO_ACCOUNT_SID ? 'Présent' : 'Manquant',
-      twilioPhoneNumber: process.env.TWILIO_PHONE_NUMBER
-    });
-
-    try {
-      // Validation du numéro
-      if (!phoneNumber) {
-        console.warn('Numéro de téléphone manquant');
-        return false;
+      // Si le numéro commence par 0, le remplacer par +33 (format français)
+      if (phoneNumber.startsWith('0')) {
+        formattedPhone = '+33' + phoneNumber.substring(1);
+      } 
+      // Si le numéro ne commence pas par +, l'ajouter
+      else if (!phoneNumber.startsWith('+')) {
+        formattedPhone = '+' + phoneNumber;
       }
 
-      // Vérification des credentials Twilio
-      if (!this.twilioClient) {
-        console.error('Client Twilio non initialisé');
-        return false;
+      // Log détaillé pour le debugging
+      console.log("🔍 Configuration Twilio:", { 
+        sid: process.env.TWILIO_SID ? "Défini" : "Non défini", 
+        auth: process.env.TWILIO_AUTH ? "Défini" : "Non défini",
+        from: process.env.TWILIO_PHONE,
+        to: formattedPhone
+      });
+
+      // Vérification que les variables d'environnement nécessaires sont définies
+      if (!process.env.TWILIO_SID || !process.env.TWILIO_AUTH || !process.env.TWILIO_PHONE) {
+        throw new Error("Configuration Twilio incomplète: vérifiez SID, AUTH et PHONE");
       }
 
-      // Envoi du SMS
-      const message = await this.twilioClient.messages.create({
-        body: `Votre code de réinitialisation est : ${resetCode}. Ce code expire dans 15 minutes.`,
-        from: process.env.TWILIO_PHONE_NUMBER,
-        to: phoneNumber
+      // Initialisation du client Twilio avec gestion d'erreur explicite
+      let client;
+      try {
+        client = twilio(process.env.TWILIO_SID, process.env.TWILIO_AUTH);
+        console.log("✅ Client Twilio initialisé");
+      } catch (initError) {
+        console.error("❌ Erreur d'initialisation du client Twilio:", initError);
+        throw new Error(`Échec d'initialisation Twilio: ${initError.message}`);
+      }
+
+      // Tentative d'envoi du SMS avec log complet de la réponse
+      console.log("📤 Tentative d'envoi SMS via Twilio");
+      const result = await client.messages.create({
+        body: `Code de réinitialisation RoadTrip: ${code}`,
+        from: process.env.TWILIO_PHONE,
+        to: formattedPhone
       });
 
-      // Log de succès
-      console.log(`SMS envoyé avec succès à ${phoneNumber}`, { 
-        messageSid: message.sid 
+      // Log détaillé du résultat pour vérifier le statut
+      console.log("📨 Réponse Twilio:", {
+        sid: result.sid,
+        status: result.status,
+        dateCreated: result.dateCreated,
+        errorCode: result.errorCode,
+        errorMessage: result.errorMessage
       });
-
-      return true;
+      
+      return result;
     } catch (error) {
-      // Log détaillé de l'erreur
-      console.error('Erreur complète lors de l\'envoi du SMS', {
+      // Gestion d'erreur améliorée pour identifier la source du problème
+      console.error("❌ Erreur d'envoi SMS détaillée:", {
         message: error.message,
         code: error.code,
         moreInfo: error.moreInfo,
         status: error.status,
-        fullError: error
+        details: error.details
       });
+      throw error;
+    }
+  },
 
-      return false;
+  // Méthode générique pour envoyer différents types de SMS
+  sendSMS: async (phoneNumber, message, type = "general") => {
+    // Réutiliser la même logique que sendPasswordResetCode pour la cohérence
+    try {
+      // Normalisation du numéro de téléphone
+      let formattedPhone = phoneNumber;
+      if (phoneNumber.startsWith('0')) {
+        formattedPhone = '+33' + phoneNumber.substring(1);
+      } else if (!phoneNumber.startsWith('+')) {
+        formattedPhone = '+' + phoneNumber;
+      }
+
+      if (!process.env.TWILIO_SID || !process.env.TWILIO_AUTH || !process.env.TWILIO_PHONE) {
+        throw new Error("Configuration Twilio incomplète");
+      }
+
+      const client = twilio(process.env.TWILIO_SID, process.env.TWILIO_AUTH);
+      const result = await client.messages.create({
+        body: message,
+        from: process.env.TWILIO_PHONE,
+        to: formattedPhone
+      });
+      
+      console.log(`SMS de type ${type} envoyé avec succès:`, {
+        to: formattedPhone,
+        status: result.status,
+        sid: result.sid
+      });
+      
+      return result;
+    } catch (error) {
+      console.error(`Erreur d'envoi de SMS de type ${type}:`, {
+        to: phoneNumber,
+        message: error.message,
+        code: error.code
+      });
+      throw error;
     }
   }
-}
+};
 
-module.exports = new SMSService();
+module.exports = SmsService;
