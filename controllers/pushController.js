@@ -1,145 +1,146 @@
 const messaging = require("../config/firebase-admin");
-const User = require("../models/User");
+const dataService = require("../services/dataService");
+const logger = require('../utils/logger');
 
 /**
- * Enregistre le token de notification push pour un utilisateur
+ * Enregistre le token push Firebase pour un utilisateur
  */
 exports.savePushToken = async (req, res) => {
     const { userId, token } = req.body;
-    
+
+    // Vérification des paramètres requis
     if (!userId || !token) {
         return res.status(400).json({ message: "userId et token sont requis" });
     }
-    
+
     try {
-        // Correction de la validation du token - Ajout d'une notification requise pour dryRun
-        try {
-            await messaging.send({
-                token,
-                notification: { 
-                    title: "Bienvenue à ROADTRIP!", 
-                    body: "Vous êtes admin" 
-                }
-            });
-        } catch (tokenError) {
-            console.error("❌ Erreur de validation du token:", tokenError);
-            
-            // Vérifier si tokenError a la propriété code
-            if (tokenError && tokenError.code === 'messaging/registration-token-not-registered') {
-                console.warn(`⚠️ Token invalide reçu pour userId ${userId}`);
-                return res.status(400).json({ 
-                    message: "Token de notification invalide", 
-                    error: "TOKEN_INVALID" 
-                });
+        // Vérification du token via Firebase en envoyant une notification de test
+        await messaging.send({
+            token,
+            notification: {
+                title: "Bienvenue à ROADTRIP!",
+                body: "Vous êtes admin"
             }
-            // Si l'erreur n'est pas liée à un token invalide, on continue mais on log l'erreur
-            console.warn(`⚠️ Erreur lors de la validation du token pour userId ${userId}:`, 
-                        tokenError && tokenError.code ? tokenError.code : "type d'erreur inconnu");
+        });
+    } catch (tokenError) {
+        // Si le token est invalide, répondre avec une erreur spécifique
+        if (tokenError?.code === 'messaging/registration-token-not-registered') {
+            return res.status(400).json({
+                message: "Token de notification invalide",
+                error: "TOKEN_INVALID"
+            });
         }
-        
-        const user = await User.findByIdAndUpdate(
-            userId,
-            { 
-                pushToken: token,
-                pushTokenUpdatedAt: new Date(),
-                pushTokenValid: true  // Marquer le token comme valide lors de l'enregistrement
-            },
-            { new: true, upsert: false }
-        );
-        
-        if (!user) {
-            console.warn(`⚠️ Utilisateur introuvable lors de l'enregistrement du token: ${userId}`);
+        logger.warn("⚠️ Erreur de validation token:", tokenError?.code);
+    }
+
+    try {
+        // Mise à jour de l'utilisateur via le data-service avec le nouveau token
+        const updatedUser = await dataService.updateUser(userId, {
+            pushToken: token,
+            pushTokenUpdatedAt: new Date(),
+            pushTokenValid: true
+        });
+
+        if (!updatedUser) {
             return res.status(404).json({ message: "Utilisateur introuvable" });
         }
-        
+
         res.status(200).json({ message: "Token enregistré avec succès" });
-    } catch (error) {
-        console.error("❌ Erreur en enregistrant le token :", error);
-        res.status(500).json({ message: "Erreur serveur" });
+
+    } catch (err) {
+        logger.error("❌ Erreur côté data-service:", err.message);
+        res.status(500).json({ message: "Erreur côté data-service" });
     }
 };
 
 /**
- * Envoie une notification push à un utilisateur spécifique
- * Version corrigée et simplifiée
+ * Envoie une notification push personnalisée à un utilisateur
  */
 exports.sendPushNotification = async (req, res) => {
     const { userId, title, body, data = {} } = req.body;
-    console.log("📱 Requête d'envoi de notification:", { userId, title, bodyLength: body?.length });
-    
+
+    logger.log("📱 Requête d'envoi de notification :", {
+        userId,
+        title,
+        bodyLength: body?.length
+    });
+
+    // Vérification des paramètres requis
     if (!userId || !title) {
         return res.status(400).json({ message: "userId et title sont requis" });
     }
-    
+
     try {
-        const user = await User.findById(userId);
-        console.log("🔍 Utilisateur trouvé:", user ? `ID: ${user._id}, Token valid: ${user.pushTokenValid}` : "Non trouvé");
-        
+        // Récupération des infos utilisateur via le data-service
+        const user = await dataService.getUserById(userId);
+        logger.log("🔍 Utilisateur trouvé via data-service :", user
+            ? `ID: ${user._id}, Token valid: ${user.pushTokenValid}`
+            : "Non trouvé");
+
         if (!user) {
             return res.status(404).json({ message: "Utilisateur introuvable" });
         }
-        
+
         if (!user.pushToken) {
-            console.warn(`⚠️ Token push non enregistré pour l'utilisateur ${userId}`);
+            logger.warn(`⚠️ Token push non enregistré pour l'utilisateur ${userId}`);
             return res.status(404).json({ message: "Token push non enregistré pour cet utilisateur" });
         }
-        
-        // Structure MESSAGE SIMPLIFIÉE - Utiliser cette version d'abord pour tester
+
+        // Construction du message à envoyer via Firebase
         const message = {
             token: user.pushToken,
             notification: {
                 title,
                 body: body || ""
             },
-            // Données minimales nécessaires
             data: {
                 title: title.toString(),
                 body: (body || "").toString(),
                 timestamp: Date.now().toString()
             }
         };
-                
+
         try {
+            // Envoi du message via Firebase
             const messageId = await messaging.send(message);
-            console.log(`✅ Notification envoyée à ${userId}, messageId: ${messageId}`);
-            
-            // Mettre à jour le statut du token
-            await User.findByIdAndUpdate(userId, {
+            logger.log(`✅ Notification envoyée à ${userId}, messageId : ${messageId}`);
+
+            // Mise à jour du statut du token en base (token valide)
+            await dataService.updateUser(userId, {
                 pushTokenValid: true,
                 lastNotificationSent: new Date()
             });
-            
-            res.status(200).json({ 
+
+            res.status(200).json({
                 message: "Notification envoyée avec succès",
-                messageId 
+                messageId
             });
+
         } catch (fcmError) {
-            console.error("❌ Erreur FCM:", fcmError);
-            
-            // Gestion spécifique des erreurs FCM
-            if (fcmError && fcmError.code === 'messaging/registration-token-not-registered') {
-                console.warn(`⚠️ Token invalide détecté pour l'utilisateur ${userId}`);
-                
-                // Mettre à jour le statut du token dans la base de données
-                await User.findByIdAndUpdate(userId, {
+            logger.error("❌ Erreur Firebase FCM :", fcmError);
+
+            // Si le token est invalide, le marquer comme invalide en base
+            if (fcmError?.code === 'messaging/registration-token-not-registered') {
+                logger.warn(`⚠️ Token invalide détecté pour l'utilisateur ${userId}`);
+
+                await dataService.updateUser(userId, {
                     pushTokenValid: false
                 });
-                
-                return res.status(400).json({ 
+
+                return res.status(400).json({
                     message: "Token de notification invalide ou expiré",
                     error: "TOKEN_INVALID"
                 });
             }
-            
-            // Pour toute autre erreur FCM
-            console.error(`❌ Erreur FCM spécifique:`, fcmError.code || "Erreur inconnue");
-            throw fcmError; // Relancer pour la gestion générale d'erreur
+
+            throw fcmError;
         }
+
     } catch (error) {
-        console.error("❌ Erreur lors de l'envoi de la notification:", error);
-        res.status(500).json({ 
+        logger.error("❌ Erreur lors de l'envoi de la notification :", error.message);
+        res.status(500).json({
             message: "Erreur lors de l'envoi de la notification",
-            error: error && error.code ? error.code : "UNKNOWN_ERROR"
+            error: error?.code || "UNKNOWN_ERROR"
         });
     }
 };

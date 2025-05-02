@@ -1,4 +1,4 @@
-require("dotenv").config(); // 👈 très important
+require("dotenv").config();
 
 const nodemailer = require("nodemailer");
 const mailjetTransport = require("nodemailer-mailjet-transport");
