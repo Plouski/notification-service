@@ -2,9 +2,8 @@ const axios = require('axios');
 const { logger } = require('../utils/transporter');
 
 const FreeSmsService = {
-  /**
-   * Envoie un SMS générique via l’API Free Mobile
-   */
+
+  // Envoie un SMS générique via l’API Free Mobile
   sendSMS: async (username, apiKey, message) => {
     logger.info(`📤 Envoi SMS via Free Mobile: username=${username.substring(0, 2)}*****, message="${message}"`);
 
@@ -29,7 +28,6 @@ const FreeSmsService = {
     } catch (error) {
       logger.error('❌ Échec de l’envoi du SMS Free Mobile');
 
-      // Log détaillé
       if (error.response) {
         logger.error(`📡 Code HTTP : ${error.response.status}`);
         logger.error(`📄 Message API : ${error.response.data}`);
@@ -40,9 +38,7 @@ const FreeSmsService = {
     }
   },
 
-  /**
-   * Envoie un SMS contenant un code de réinitialisation
-   */
+  // Envoie un SMS contenant un code de réinitialisation
   sendPasswordResetCode: async (username, apiKey, code) => {
     return await FreeSmsService.sendSMS(
       username,

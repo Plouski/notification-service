@@ -1,13 +1,13 @@
 const EmailService = require("../services/emailService");
 const FreeSmsService = require("../services/freeSmsService");
-const PushService = require("../services/pushService");
 const logger = require("../utils/logger");
+const {
+  notificationsSentTotal,
+  notificationDeliveryTime,
+} = require("../services/metricsService");
 
 const NotificationController = {
-  /**
-   * Envoie un e-mail en fonction du type spécifié
-   * Types supportés : confirm, reset, welcome
-   */
+  // Envoie un e-mail en fonction du type spécifié
   sendEmail: async (req, res) => {
     const { type, email, tokenOrCode } = req.body;
 
@@ -26,17 +26,23 @@ const NotificationController = {
           return res.status(400).json({ error: "Type d'e-mail inconnu" });
       }
 
+      const duration = process.hrtime(start);
+      const seconds = duration[0] + duration[1] / 1e9;
+
+      notificationDeliveryTime.observe({ type: "email" }, seconds);
+      notificationsSentTotal.inc({ type: "email", status: "success" });
+
       return res.status(200).json({ success: true });
     } catch (err) {
       logger.error("❌ Erreur dans sendEmail :", err.message);
+
+      notificationsSentTotal.inc({ type: "email", status: "failed" });
+
       return res.status(500).json({ error: err.message });
     }
   },
 
-  /**
-   * Envoie un SMS via le service Free Mobile
-   * Actuellement, gère uniquement le type 'reset' (réinitialisation)
-   */
+  // Envoie un SMS via le service Free Mobile
   sendSMS: async (req, res) => {
     logger.info("📨 Requête SMS reçue : " + JSON.stringify(req.body));
 
@@ -61,7 +67,15 @@ const NotificationController = {
         logger.info(
           `🔄 Tentative d'envoi SMS de réinitialisation avec code ${code}`
         );
+
         await FreeSmsService.sendPasswordResetCode(username, apiKey, code);
+
+        const duration = process.hrtime(start);
+        const seconds = duration[0] + duration[1] / 1e9;
+
+        notificationDeliveryTime.observe({ type: "sms" }, seconds);
+        notificationsSentTotal.inc({ type: "sms", status: "success" });
+
         logger.info("✅ SMS envoyé avec succès");
       } else {
         logger.warn("⚠️ Type de SMS non pris en charge pour l’instant :", type);
@@ -72,6 +86,8 @@ const NotificationController = {
         message: "SMS envoyé avec succès",
       });
     } catch (error) {
+      notificationsSentTotal.inc({ type: "sms", status: "failed" });
+
       logger.error("❌ Erreur de traitement SMS :", {
         message: error.message,
         stack: error.stack,
@@ -84,14 +100,22 @@ const NotificationController = {
     }
   },
 
-  /**
-   * Envoie une notification push via Firebase
-   */
+  // Envoie une notification push via Firebase
   sendPush: async (req, res) => {
     const { token, title, body } = req.body;
 
     try {
-      await PushService.sendNotification(token, title, body);
+      const message = {
+        token,
+        notification: { title, body },
+        data: {
+          title: title.toString(),
+          body: (body || "").toString(),
+          timestamp: Date.now().toString(),
+        },
+      };
+
+      await messaging.send(message);
       return res.status(200).json({ success: true });
     } catch (err) {
       logger.error("❌ Erreur dans sendPush :", err.message);
