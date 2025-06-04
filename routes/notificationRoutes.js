@@ -6,7 +6,6 @@ const verifyApiKey = require("../middlewares/verifyApiKey");
 
 router.post("/email", NotificationController.sendEmail)
 router.post("/sms", NotificationController.sendSMS)
-
 router.post("/push/token", verifyApiKey, PushController.savePushToken);
 router.post("/push/send", verifyApiKey, PushController.sendPushNotification);
 
