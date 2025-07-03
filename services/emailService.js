@@ -1,7 +1,6 @@
 const transporter = require("../utils/transporter");
 const dotenv = require("dotenv");
 const confirmationTemplate = require("../templates/email/confirmation");
-const welcomeTemplate = require("../templates/email/welcome");
 const resetTemplate = require("../templates/email/passwordReset");
 
 dotenv.config();
@@ -12,19 +11,6 @@ const EmailService = {
   sendConfirmationEmail: async (email, token) => {
     const link = `${process.env.FRONTEND_URL}/confirm-account?token=${token}`;
     const { subject, html } = confirmationTemplate(link);
-
-    return transporter.sendMail({
-      from: `"${process.env.EMAIL_FROM_NAME}" <${process.env.EMAIL_FROM_ADDRESS}>`,
-      to: email,
-      subject,
-      html
-    });
-  },
-
-  // Envoie un email de bienvenue après l'inscription
-  sendWelcomeEmail: async (email, firstName) => {
-    const link = `${process.env.FRONTEND_URL}/dashboard`;
-    const { subject, html } = welcomeTemplate(firstName, link);
 
     return transporter.sendMail({
       from: `"${process.env.EMAIL_FROM_NAME}" <${process.env.EMAIL_FROM_ADDRESS}>`,
