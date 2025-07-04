@@ -1,16 +1,11 @@
 const EmailService = require("../services/emailService");
 const FreeSmsService = require("../services/freeSmsService");
 const logger = require("../utils/logger");
-const {
-  notificationsSentTotal,
-  notificationDeliveryTime,
-} = require("../services/metricsService");
 
 const NotificationController = {
   // Envoie un e-mail en fonction du type spécifié
   sendEmail: async (req, res) => {
     const { type, email, tokenOrCode } = req.body;
-    const start = process.hrtime();
 
     try {
       switch (type) {
@@ -27,17 +22,10 @@ const NotificationController = {
           return res.status(400).json({ error: "Type d'e-mail inconnu" });
       }
 
-      const duration = process.hrtime(start);
-      const seconds = duration[0] + duration[1] / 1e9;
-
-      notificationDeliveryTime.observe({ type: "email" }, seconds);
-      notificationsSentTotal.inc({ type: "email", status: "success" });
-
       return res.status(200).json({ success: true });
     } catch (err) {
       logger.error("❌ Erreur dans sendEmail :", err.message);
 
-      notificationsSentTotal.inc({ type: "email", status: "failed" });
 
       return res.status(500).json({ error: err.message });
     }
@@ -76,9 +64,6 @@ const NotificationController = {
         const duration = process.hrtime(start);
         const seconds = duration[0] + duration[1] / 1e9;
 
-        notificationDeliveryTime.observe({ type: "sms" }, seconds);
-        notificationsSentTotal.inc({ type: "sms", status: "success" });
-
         logger.info("✅ SMS envoyé avec succès");
         
         return res.status(200).json({
@@ -95,7 +80,6 @@ const NotificationController = {
       }
 
     } catch (error) {
-      notificationsSentTotal.inc({ type: "sms", status: "failed" });
 
       logger.error("❌ Erreur de traitement SMS :", {
         message: error.message,
