@@ -2,54 +2,56 @@ require("dotenv").config();
 const express = require("express");
 const helmet = require("helmet");
 const cors = require("cors");
-const notificationRoutes = require("./routes/notificationRoutes");
-const metricsRoutes = require("./routes/metricsRoutes");
-const dataService = require("./services/dataService");
 const logger = require("./utils/logger");
-const {
-  httpRequestsTotal,
-  httpDurationHistogram,
-  serviceHealthStatus,
-  externalServiceHealth,
-} = require("./services/metricsService");
+const notificationRoutes = require("./routes/notificationRoutes");
+const dataService = require("./services/dataService");
 const basicLimiter = require("./middlewares/rateLimiter");
-
+const {
+  register,
+  httpRequestDuration,
+  httpRequestsTotal,
+  updateServiceHealth,
+  updateActiveConnections,
+  updateExternalServiceHealth
+} = require('./metrics');
 const app = express();
 const PORT = process.env.PORT || 5005;
+const METRICS_PORT = process.env.METRICS_PORT || 9090;
+const SERVICE_NAME = "notification-service";
 
-console.log("🔥 Lancement du Notification Service...");
+console.log(`🔥 Lancement du ${SERVICE_NAME}...`);
+
+// INITIALISATION ASYNC
 
 (async () => {
   try {
-    // ───────────── Vérification des services dépendants ─────────────
+    // Vérification data-service
     logger.info("🔍 Vérification de la connexion au data-service...");
     try {
       await dataService.getUserById("health-check");
       logger.info("✅ Data-service disponible");
+      updateExternalServiceHealth('data-service', true);
     } catch (error) {
       if (error.response?.status === 404) {
-        logger.info(
-          "✅ Data-service disponible (test user non trouvé = normal)"
-        );
+        logger.info("✅ Data-service disponible (test user non trouvé = normal)");
+        updateExternalServiceHealth('data-service', true);
       } else {
         logger.error("❌ Data-service indisponible:", error.message);
-        logger.warn(
-          "⚠️ Démarrage en mode dégradé - certaines fonctionnalités peuvent être limitées"
-        );
+        logger.warn("⚠️ Démarrage en mode dégradé");
+        updateExternalServiceHealth('data-service', false);
       }
     }
 
-    // ───────────── Middlewares globaux ─────────────
-    app.use(
-      helmet({
-        contentSecurityPolicy: {
-          directives: {
-            defaultSrc: ["'self'"],
-            connectSrc: ["'self'", "https://fcm.googleapis.com"],
-          },
+    // MIDDLEWARES SPÉCIFIQUES NOTIFICATION
+
+    app.use(helmet({
+      contentSecurityPolicy: {
+        directives: {
+          defaultSrc: ["'self'"],
+          connectSrc: ["'self'", "https://fcm.googleapis.com"],
         },
-      })
-    );
+      },
+    }));
 
     app.use(basicLimiter);
 
@@ -65,244 +67,270 @@ console.log("🔥 Lancement du Notification Service...");
     app.use(express.json({ limit: "1mb", strict: true }));
     app.use(express.urlencoded({ extended: true, limit: "1mb" }));
 
-    // ───────────── Middleware de monitoring temps de réponse ─────────────
-    app.use((req, res, next) => {
-      const start = process.hrtime();
+    // MIDDLEWARE DE MÉTRIQUES STANDARDISÉ
 
-      res.on("finish", () => {
-        const duration = process.hrtime(start);
-        const seconds = duration[0] + duration[1] / 1e9;
+    let currentConnections = 0;
 
-        // Mesurer le temps de réponse
-        httpDurationHistogram.observe(
-          {
-            method: req.method,
-            route: req.route ? req.route.path : req.path,
-            status_code: res.statusCode,
-          },
-          seconds
-        );
-
-        // Compter les requêtes
-        httpRequestsTotal.inc({
-          method: req.method,
-          route: req.route ? req.route.path : req.path,
-          status_code: res.statusCode,
-        });
-      });
-
-      next();
-    });
-
-    // ───────────── Middleware de logging ─────────────
     app.use((req, res, next) => {
       const start = Date.now();
+      currentConnections++;
+      updateActiveConnections(currentConnections);
+
       res.on("finish", () => {
-        const duration = Date.now() - start;
-        logger.info(
-          `${req.method} ${req.path} - ${res.statusCode} - ${duration}ms`
+        const duration = (Date.now() - start) / 1000;
+        currentConnections--;
+        updateActiveConnections(currentConnections);
+
+        httpRequestDuration.observe(
+          {
+            method: req.method,
+            route: req.route?.path || req.path,
+            status_code: res.statusCode,
+          },
+          duration
         );
+
+        httpRequestsTotal.inc({
+          method: req.method,
+          route: req.route?.path || req.path,
+          status_code: res.statusCode,
+        });
+
+        logger.info(`${req.method} ${req.path} - ${res.statusCode} - ${Math.round(duration * 1000)}ms`);
       });
+
       next();
     });
 
-    // ───────────── Routes ─────────────
-    app.use("/api/notifications", notificationRoutes);
-    app.use("/metrics", metricsRoutes);
+    // ROUTES SPÉCIFIQUES NOTIFICATION
 
-    // ───────────── Route de santé avec métriques ─────────────
+    app.use("/api/notifications", notificationRoutes);
+
+    // ROUTES STANDARD
+
+    // Métriques Prometheus
+    app.get("/metrics", async (req, res) => {
+      res.set("Content-Type", register.contentType);
+      res.end(await register.metrics());
+    });
+
+    // Health check enrichi pour notification-service
     app.get("/health", async (req, res) => {
       const health = {
         status: "healthy",
         timestamp: new Date().toISOString(),
         uptime: process.uptime(),
-        services: {},
+        service: SERVICE_NAME,
+        version: "1.0.0",
+        dependencies: {}
       };
 
+      // Vérifier data-service
       try {
         await dataService.getUserById("health-check-test");
-        health.services.dataService = "healthy";
-        externalServiceHealth.set({ service_name: "data-service" }, 1);
+        health.dependencies.dataService = "healthy";
+        updateExternalServiceHealth('data-service', true);
       } catch (error) {
         if (error.response?.status === 404) {
-          health.services.dataService = "healthy";
-          externalServiceHealth.set({ service_name: "data-service" }, 1);
+          health.dependencies.dataService = "healthy";
+          updateExternalServiceHealth('data-service', true);
         } else {
-          health.services.dataService = "unhealthy";
+          health.dependencies.dataService = "unhealthy";
           health.status = "degraded";
-          externalServiceHealth.set({ service_name: "data-service" }, 0);
-          logger.warn(`⚠️ Data-service unhealthy: ${error.message}`);
+          updateExternalServiceHealth('data-service', false);
         }
       }
 
-      try {
-        const messaging = require("./config/firebase-admin");
-        if (messaging) {
-          health.services.firebase = "healthy";
-          externalServiceHealth.set({ service_name: "firebase" }, 1);
-        } else {
-          throw new Error("Firebase messaging not initialized");
-        }
-      } catch (error) {
-        health.services.firebase = "unhealthy";
-        health.status = "degraded";
-        externalServiceHealth.set({ service_name: "firebase" }, 0);
-        logger.warn(`⚠️ Firebase unhealthy: ${error.message}`);
+      // Vérifier Firebase
+      if (process.env.FIREBASE_PROJECT_ID) {
+        health.dependencies.firebase = "configured";
+        updateExternalServiceHealth('firebase', true);
+      } else {
+        health.dependencies.firebase = "not_configured";
+        updateExternalServiceHealth('firebase', false);
       }
 
-      try {
-        const transporter = require("./utils/transporter");
-        if (transporter && process.env.MAILJET_API_KEY) {
-          health.services.email = "healthy";
-          externalServiceHealth.set({ service_name: "mailjet" }, 1);
-        } else {
-          throw new Error("Email transporter not configured");
-        }
-      } catch (error) {
-        health.services.email = "unhealthy";
-        health.status = "degraded";
-        externalServiceHealth.set({ service_name: "mailjet" }, 0);
-        logger.warn(`⚠️ Email service unhealthy: ${error.message}`);
+      // Vérifier Email (Mailjet)
+      if (process.env.MAILJET_API_KEY) {
+        health.dependencies.email = "configured";
+        updateExternalServiceHealth('mailjet', true);
+      } else {
+        health.dependencies.email = "not_configured";
+        updateExternalServiceHealth('mailjet', false);
       }
 
-      const isHealthy = health.status === "healthy" ? 1 : 0;
-      serviceHealthStatus.set(
-        { service_name: "notification-service" },
-        isHealthy
-      );
+      const isHealthy = health.status === "healthy";
+      updateServiceHealth(SERVICE_NAME, isHealthy);
 
-      const statusCode = health.status === "healthy" ? 200 : 503;
+      const statusCode = isHealthy ? 200 : 503;
       res.status(statusCode).json(health);
     });
 
-    app.get("/ping", (req, res) => {
-      res.status(200).json({
-        status: "pong ✅",
+    // Vitals
+    app.get("/vitals", (req, res) => {
+      const vitals = {
+        service: SERVICE_NAME,
         timestamp: new Date().toISOString(),
-        service: "notification-service",
         uptime: process.uptime(),
-      });
-    });
-
-    // ───────────── Gestion 404 ─────────────
-    app.use((req, res) => {
-      logger.warn("📍 Route non trouvée", {
-        method: req.method,
-        path: req.path,
-        ip: req.ip,
-        userAgent: req.headers["user-agent"],
-      });
-
-      res.status(404).json({
-        error: "Route non trouvée",
-        message: `La route ${req.method} ${req.path} n'existe pas`,
-        availableRoutes: [
-          "GET /health",
-          "GET /ping",
+        memory: process.memoryUsage(),
+        cpu: process.cpuUsage(),
+        status: "running",
+        active_connections: currentConnections,
+        
+        providers: {
+          email: !!process.env.MAILJET_API_KEY,
+          sms: !!process.env.SMS_API_KEY,
+          firebase: !!process.env.FIREBASE_PROJECT_ID
+        },
+        
+        endpoints: [
           "POST /api/notifications/email",
           "POST /api/notifications/sms",
           "POST /api/notifications/push/token",
-          "POST /api/notifications/push/send",
-          "GET /metrics",
+          "POST /api/notifications/push/send"
+        ]
+      };
+
+      res.json(vitals);
+    });
+
+    // Ping
+    app.get("/ping", (req, res) => {
+      res.json({
+        status: "pong ✅",
+        service: SERVICE_NAME,
+        timestamp: new Date().toISOString(),
+        uptime: process.uptime()
+      });
+    });
+
+    // GESTION D'ERREURS
+
+    app.use((req, res) => {
+      res.status(404).json({
+        error: "Route non trouvée",
+        service: SERVICE_NAME,
+        message: `${req.method} ${req.path} n'existe pas`,
+        availableRoutes: [
+          "GET /health", "GET /vitals", "GET /metrics", "GET /ping",
+          "POST /api/notifications/email", "POST /api/notifications/sms",
+          "POST /api/notifications/push/token", "POST /api/notifications/push/send"
         ],
         timestamp: new Date().toISOString(),
       });
     });
 
-    // ───────────── Gestion d'erreurs globales ─────────────
-    app.use((err, req, res) => {
-      logger.error("💥 Erreur Express:", {
-        message: err.message,
-        stack: err.stack,
-        url: req.url,
-        method: req.method,
-        ip: req.ip,
-      });
+    app.use((err, req, res, next) => {
+      logger.error(`💥 Erreur ${SERVICE_NAME}:`, err.message);
 
-      // Erreurs spécifiques notifications
       if (err.name === "ValidationError") {
         return res.status(400).json({
           error: "Erreur de validation",
+          service: SERVICE_NAME,
           message: err.message,
-          details: err.errors,
           timestamp: new Date().toISOString(),
         });
       }
 
-      // Erreurs de rate limiting
       if (err.status === 429) {
         return res.status(429).json({
           error: "Trop de requêtes",
-          message: "Limite de taux dépassée, veuillez réessayer plus tard",
+          service: SERVICE_NAME,
+          message: "Limite de taux dépassée",
           timestamp: new Date().toISOString(),
         });
       }
 
-      // Erreurs Firebase
       if (err.code && err.code.startsWith("messaging/")) {
         return res.status(400).json({
           error: "Erreur Firebase",
+          service: SERVICE_NAME,
           message: "Erreur lors de l'envoi de la notification push",
-          code: err.code,
           timestamp: new Date().toISOString(),
         });
       }
 
-      // Erreurs de connexion aux services externes
-      if (
-        err.message &&
-        (err.message.includes("data-service") ||
-          err.message.includes("ECONNREFUSED"))
-      ) {
+      if (err.message && err.message.includes("data-service")) {
+        updateExternalServiceHealth('data-service', false);
         return res.status(503).json({
           error: "Service temporairement indisponible",
-          message: "Un service externe est actuellement indisponible",
+          service: SERVICE_NAME,
+          message: "Le data-service est actuellement indisponible",
           timestamp: new Date().toISOString(),
         });
       }
 
-      const statusCode = err.statusCode || err.status || 500;
-      const message =
-        process.env.NODE_ENV === "production" && statusCode === 500
-          ? "Erreur serveur interne"
-          : err.message || "Une erreur est survenue";
-
-      res.status(statusCode).json({
+      res.status(err.statusCode || 500).json({
         error: "Erreur serveur",
-        message,
+        service: SERVICE_NAME,
+        message: err.message || "Une erreur est survenue",
         timestamp: new Date().toISOString(),
-        path: req.path,
-        ...(process.env.NODE_ENV !== "production" && { stack: err.stack }),
       });
     });
 
-    // ───────────── Démarrage du serveur ─────────────
+    // DÉMARRAGE
+
+    // Serveur principal
     app.listen(PORT, () => {
-      logger.info(
-        `🚀 Notification service démarré sur http://localhost:${PORT}`
-      );
-      logger.info(`🔐 Environnement: ${process.env.NODE_ENV || "development"}`);
-      logger.info(
-        `🌐 CORS autorisé pour: ${
-          process.env.CORS_ORIGIN || "http://localhost:3000"
-        }`
-      );
-      logger.info(
-        `📊 Métriques disponibles sur: http://localhost:${PORT}/metrics`
-      );
-      logger.info(
-        `❤️ Health check disponible sur: http://localhost:${PORT}/health`
-      );
-      logger.info(
-        `🔔 API Notifications disponible sur: http://localhost:${PORT}/api/notifications`
-      );
+      console.log(`🔔 ${SERVICE_NAME} démarré sur le port ${PORT}`);
+      console.log(`📊 Métriques: http://localhost:${PORT}/metrics`);
+      console.log(`❤️ Health: http://localhost:${PORT}/health`);
+      console.log(`📈 Vitals: http://localhost:${PORT}/vitals`);
+      console.log(`🔔 API: http://localhost:${PORT}/api/notifications`);
+      
+      updateServiceHealth(SERVICE_NAME, true);
+      logger.info(`✅ ${SERVICE_NAME} avec métriques démarré`);
+    });
+
+    // Serveur métriques séparé
+    const metricsApp = express();
+    metricsApp.get('/metrics', async (req, res) => {
+      res.set('Content-Type', register.contentType);
+      res.end(await register.metrics());
+    });
+
+    metricsApp.get('/health', (req, res) => {
+      res.json({ status: 'healthy', service: `${SERVICE_NAME}-metrics` });
+    });
+
+    metricsApp.listen(METRICS_PORT, () => {
+      console.log(`📊 Metrics server running on port ${METRICS_PORT}`);
     });
 
   } catch (err) {
     console.error("❌ Erreur fatale au démarrage :", err.message);
-    console.error(err.stack);
+    updateServiceHealth(SERVICE_NAME, false);
     process.exit(1);
   }
 })();
+
+// GRACEFUL SHUTDOWN
+
+function gracefulShutdown(signal) {
+  console.log(`🔄 Arrêt ${SERVICE_NAME} (${signal})...`);
+  updateServiceHealth(SERVICE_NAME, false);
+  updateExternalServiceHealth('data-service', false);
+  updateExternalServiceHealth('firebase', false);
+  updateExternalServiceHealth('mailjet', false);
+  updateActiveConnections(0);
+  
+  setTimeout(() => {
+    process.exit(0);
+  }, 1000);
+}
+
+process.on("SIGTERM", gracefulShutdown);
+process.on("SIGINT", gracefulShutdown);
+
+process.on('unhandledRejection', (reason, promise) => {
+  logger.error('Unhandled Rejection:', reason);
+  updateServiceHealth(SERVICE_NAME, false);
+});
+
+process.on('uncaughtException', (error) => {
+  logger.error('Uncaught Exception:', error);
+  updateServiceHealth(SERVICE_NAME, false);
+  process.exit(1);
+});
 
 module.exports = app;
